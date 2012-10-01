@@ -1,0 +1,133 @@
+<?php
+
+/*
+ * Implementation of hook_node_presave()
+ */
+
+function i18n_poll_node_presave($node) {
+  if($node->type == 'poll') {
+    //Delete from i18n_string removed choise
+    foreach($node->choice as $k => $v) {
+      if(empty($v['chtext']))  {
+        i18n_string_remove('default:poll_choice:' . $v['chid'] . ':name', $v['chtext'], $options = array());
+      }
+    }
+  }
+}
+
+/*
+ * Implementation of hook_node_save()
+ */
+
+function i18n_poll_node_save($node) {
+  if($node->type == 'poll') {
+    i18n_poll_create_strings($node);
+  }
+}
+
+/*
+ * Implementation of hook_node_update()
+ */
+
+function i18n_poll_node_update($node) {
+
+  $node->choice = db_select('poll_choice', 'c')
+    ->addTag('translatable')
+    ->fields('c', array('chid', 'chtext', 'chvotes', 'weight'))
+    ->condition('c.nid', $node->nid)
+    ->orderBy('weight')
+    ->execute()->fetchAllAssoc('chid', PDO::FETCH_ASSOC);
+
+  if($node->type == 'poll') {
+    i18n_poll_create_strings($node);
+  }
+}
+
+function i18n_poll_create_strings($node) {
+  i18n_string_update('default:poll_node:' . $node->nid . ':name', $node->title, $options = array());
+
+  if(is_array($node->choice)) {
+    foreach($node->choice as $k => $v) {
+      i18n_string_update('default:poll_choice:' . $v['chid'] . ':name', $v['chtext'], $options = array());
+    }
+  }
+}
+
+/*
+ * Implementation of hook_node_load()
+ */
+
+function i18n_poll_node_load($nodes, $types) {
+  if(is_array($nodes)) {
+    foreach($nodes as $k => $v) {
+      if($v->type != 'poll' || (arg(0) == 'node' && arg(2) == 'edit')) continue;
+      $nodes[$k]->title = i18n_string_translate('default:poll_node:' . $v->nid . ':name', $v->title);
+      if(!empty($v->choice)) {
+        foreach($v->choice as $kk => $vv) {
+          $nodes[$k]->choice[$kk]['chtext'] = i18n_string_translate('default:poll_choice:' . $vv['chid'] . ':name', $vv['chtext']);
+        }
+      }
+    }
+  }
+}
+
+/*
+ * Implementation of hook_node_delete()
+ */
+
+function i18n_poll_node_delete($node) {
+  i18n_string_remove('default:poll_node:' . $node->nid . ':name', $node->title, $options = array());
+
+  if(is_array($node->choice)) {
+    foreach($node->choice as $k => $v) {
+      i18n_string_remove('default:poll_choice:' . $v['chid'] . ':name', $v['chtext'], $options = array());
+    }
+  }
+}
+
+/*
+ * Implementation of hook_menu_alter()
+ */
+
+function i18n_poll_menu_alter(&$items) {
+  //Rewrite page site.com/poll because this template can use hook_view and we needed to translate poll title
+  $items['poll']['page callback'] = 'i18n_poll_page';
+}
+
+function i18n_poll_page() {
+  $polls_per_page = 15;
+
+  $count_select = db_select('node', 'n');
+  $count_select->addExpression('COUNT(*)', 'expression');
+  $count_select->join('poll', 'p', 'p.nid = n.nid');
+  $count_select->condition('n.status', 1);
+
+  // List all polls.
+  $select = db_select('node', 'n');
+  $select->join('poll', 'p', 'p.nid = n.nid');
+  $select->join('poll_choice', 'c', 'c.nid = n.nid');
+  $select->addExpression('SUM(c.chvotes)', 'votes');
+  $select = $select->fields('n', array('nid', 'title', 'created'))
+    ->fields('p', array('active'))
+    ->condition('n.status', 1)
+    ->orderBy('n.created', 'DESC')
+    ->groupBy('n.nid')
+    ->groupBy('n.title')
+    ->groupBy('p.active')
+    ->groupBy('n.created')
+    ->extend('PagerDefault')
+    ->limit($polls_per_page)
+    ->addTag('node_access');
+  $select->setCountQuery($count_select);
+  $queried_nodes = $select->execute()
+    ->fetchAllAssoc('nid');
+
+  $output = '<ul>';
+  foreach ($queried_nodes as $node) {
+    $node->title = i18n_string_translate('default:poll_node:' . $node->nid . ':name', $node->title);
+    $output .= '<li>' . l($node->title, "node/$node->nid") . ' - ' . format_plural($node->votes, '1 vote', '@count votes') . ' - ' . ($node->active ? t('open') : t('closed')) . '</li>';
+  }
+  $output .= '</ul>';
+  $output .= theme('pager');
+  return $output;
+}

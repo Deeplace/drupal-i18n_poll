@@ -1,0 +1,6 @@
+name = i18n_pull
+decription = This module provide possibility to translate questions in pull
+core = 7.x
+version = 7.x.1
+dependencies[] = i18n
+package = Deeplace
